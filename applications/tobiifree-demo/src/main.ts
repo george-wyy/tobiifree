@@ -9,6 +9,8 @@
 
 import { Tobii, UsbSource, type Source, type GazeSample, type DisplayArea, type RawGazeColumn } from 'tobiifree-sdk-ts';
 import { createScene } from './scene';
+import { maybeStartBridgeProducer } from './bridge-producer';
+import * as wb from './cal-workbench';
 
 const $ = <T extends HTMLElement>(id: string): T => {
   const el = document.getElementById(id);
@@ -47,12 +49,21 @@ const daOnboardCal = $<HTMLButtonElement>('da-onboard-cal');
 const daOnboardPts = $<HTMLSelectElement>('da-onboard-pts');
 const calOverlay = $<HTMLDivElement>('cal-overlay');
 const calTarget = $<HTMLDivElement>('cal-target');
+const wbLayout = $<HTMLSelectElement>('wb-layout');
+const wbFit = $<HTMLSelectElement>('wb-fit');
+const wbRun = $<HTMLButtonElement>('wb-run');
+const wbBundles = $<HTMLSelectElement>('wb-bundles');
+const wbLoad = $<HTMLButtonElement>('wb-load');
+const wbExport = $<HTMLButtonElement>('wb-export');
+const wbDelete = $<HTMLButtonElement>('wb-delete');
+const wbApply = $<HTMLInputElement>('wb-apply');
+const wbResults = $<HTMLDivElement>('wb-results');
 const onboardCalDot = $<HTMLDivElement>('onboard-cal-dot');
 const collectTarget = $<HTMLDivElement>('collect-target');
 const calStatus = $<HTMLDivElement>('cal-status');
 const daLock = $<HTMLInputElement>('da-lock');
 const tiltSlider = $<HTMLInputElement>('da-tilt');
-const tiltVal = $<HTMLDivElement>('da-tilt-val');
+const tiltVal = $<HTMLInputElement>('da-tilt-val');
 const stage3d = $<HTMLCanvasElement>('stage3d');
 
 const scene3d = createScene(stage3d);
@@ -386,6 +397,19 @@ async function onConnected(src: Source) {
   transportSel.disabled = true;
 
   tracker.subscribeToGaze(render);
+  // Optional: forward samples to a local WS relay for external apps (voice-gaze-ui, etc.).
+  // Off by default; opt in via ?bridge=1 or ?bridge=ws://host:port/path.
+  maybeStartBridgeProducer(tracker, (s) => {
+    // If a client-side correction model is active, broadcast the corrected
+    // point so downstream consumers (voice-gaze-ui, etc.) pick it up
+    // without needing to know the model exists.
+    if (gazeModel) {
+      const c = modelPredict(gazeModel, s, readForm());
+      if (c) return { x: c.x, y: c.y, corrected: true };
+    }
+    const p = s.gaze_point_2d_norm ?? s.gaze_point_2d_L_norm ?? s.gaze_point_2d_R_norm;
+    return p ? { x: p.x, y: p.y, corrected: false } : null;
+  });
   requestAnimationFrame(pumpStats);
   daBox.style.display = 'block';
 
@@ -456,17 +480,19 @@ const sliders: Record<CornerKey, Record<AxisKey, HTMLInputElement>> = {
   tr: {} as Record<AxisKey, HTMLInputElement>,
   bl: {} as Record<AxisKey, HTMLInputElement>,
 };
-const valLabels: Record<CornerKey, Record<AxisKey, HTMLDivElement>> = {
-  tl: {} as Record<AxisKey, HTMLDivElement>,
-  tr: {} as Record<AxisKey, HTMLDivElement>,
-  bl: {} as Record<AxisKey, HTMLDivElement>,
+const valLabels: Record<CornerKey, Record<AxisKey, HTMLInputElement>> = {
+  tl: {} as Record<AxisKey, HTMLInputElement>,
+  tr: {} as Record<AxisKey, HTMLInputElement>,
+  bl: {} as Record<AxisKey, HTMLInputElement>,
 };
 
-// Default: 400mm × 300mm plane, BL at (-200, 0, 0), tracker-relative.
+// Default: 27" 16:9 monitor (595×335mm active area, tracker centered
+// 40mm below the screen's bottom edge). Override per-rig via the UI
+// or by editing this constant.
 const DEFAULT_AREA: DisplayArea = {
-  tl: { x: -200, y: 300, z: 0 },
-  tr: { x: 200, y: 300, z: 0 },
-  bl: { x: -200, y: 0, z: 0 },
+  tl: { x: -297.5, y: 375, z: 0 },
+  tr: { x: 297.5, y: 375, z: 0 },
+  bl: { x: -297.5, y: 40, z: 0 },
 };
 
 const STORAGE_KEY_AREA = 'tobii_last_good_area';
@@ -514,7 +540,7 @@ function applyLockConstraints() {
 
 function setSliderValue(c: CornerKey, a: AxisKey, v: number) {
   sliders[c][a].value = String(v);
-  valLabels[c][a].textContent = v.toFixed(1);
+  valLabels[c][a].value = v.toFixed(1);
 }
 
 function updateLockUi() {
@@ -523,11 +549,13 @@ function updateLockUi() {
     for (const a of AXES) {
       const dep = isDependent(c, a);
       sliders[c][a].disabled = locked && dep;
+      valLabels[c][a].disabled = locked && dep;
       valLabels[c][a].classList.toggle('locked', locked && dep);
     }
   }
   // Tilt only meaningful when locked (otherwise corners are independent).
   tiltSlider.disabled = !locked;
+  tiltVal.disabled = !locked;
   tiltVal.classList.toggle('locked', !locked);
 }
 
@@ -535,7 +563,7 @@ function syncTiltFromCorners() {
   // Reverse-derive tilt from the current corner values: tilt = bl.z - tl.z.
   const tilt = Number(sliders.bl.z.value) - Number(sliders.tl.z.value);
   tiltSlider.value = String(tilt);
-  tiltVal.textContent = tilt.toFixed(1);
+  tiltVal.value = tilt.toFixed(1);
 }
 
 let writeInFlight = false;
@@ -596,15 +624,29 @@ function buildForm() {
       input.max = String(r.max);
       input.step = String(r.step);
       input.value = String(DEFAULT_AREA[c][a]);
-      const val = document.createElement('div');
+      const val = document.createElement('input');
+      val.type = 'number';
       val.className = 'val';
-      val.textContent = DEFAULT_AREA[c][a].toFixed(1);
-      input.addEventListener('input', () => {
-        val.textContent = Number(input.value).toFixed(1);
+      val.min = String(r.min);
+      val.max = String(r.max);
+      val.step = String(r.step);
+      val.value = DEFAULT_AREA[c][a].toFixed(1);
+      const onCornerChange = () => {
         if (daLock.checked) applyLockConstraints();
         else syncTiltFromCorners();
         syncRectFromCorners();
         void writeDisplayArea();
+      };
+      input.addEventListener('input', () => {
+        val.value = Number(input.value).toFixed(1);
+        onCornerChange();
+      });
+      val.addEventListener('input', () => {
+        const v = Number(val.value);
+        if (Number.isFinite(v)) {
+          input.value = String(v);
+          onCornerChange();
+        }
       });
       daGrid.appendChild(label);
       daGrid.appendChild(input);
@@ -643,7 +685,7 @@ const RECT_DEFS: Array<{ key: RectKey; label: string; min: number; max: number; 
   { key: 'cz', label: 'cz', min: -200, max: 200, step: 0.5 },
 ];
 const rectSliders = {} as Record<RectKey, HTMLInputElement>;
-const rectVals = {} as Record<RectKey, HTMLDivElement>;
+const rectVals = {} as Record<RectKey, HTMLInputElement>;
 
 function buildRectForm() {
   const header = document.createElement('div');
@@ -659,12 +701,26 @@ function buildRectForm() {
     input.min = String(d.min);
     input.max = String(d.max);
     input.step = String(d.step);
-    const val = document.createElement('div');
+    const val = document.createElement('input');
+    val.type = 'number';
     val.className = 'val';
-    input.addEventListener('input', () => {
-      val.textContent = Number(input.value).toFixed(1);
+    val.min = String(d.min);
+    val.max = String(d.max);
+    val.step = String(d.step);
+    const onRectChange = () => {
       applyRectToCorners();
       void writeDisplayArea();
+    };
+    input.addEventListener('input', () => {
+      val.value = Number(input.value).toFixed(1);
+      onRectChange();
+    });
+    val.addEventListener('input', () => {
+      const v = Number(val.value);
+      if (Number.isFinite(v)) {
+        input.value = String(v);
+        onRectChange();
+      }
     });
     rectGrid.appendChild(label);
     rectGrid.appendChild(input);
@@ -685,7 +741,7 @@ function applyRectToCorners() {
   const tEff = Math.max(-h, Math.min(h, tilt));
   if (tEff !== tilt) {
     tiltSlider.value = String(tEff);
-    tiltVal.textContent = tEff.toFixed(1);
+    tiltVal.value = tEff.toFixed(1);
   }
   const dy = Math.sqrt(Math.max(0, h * h - tEff * tEff));
   const halfW = w / 2;
@@ -717,7 +773,7 @@ function syncRectFromCorners() {
   void blx;
   const setRect = (k: RectKey, v: number) => {
     rectSliders[k].value = String(v);
-    rectVals[k].textContent = v.toFixed(1);
+    rectVals[k].value = v.toFixed(1);
   };
   setRect('width', width);
   setRect('height', height);
@@ -730,6 +786,7 @@ function updateRectLockUi() {
   const locked = daLock.checked;
   for (const d of RECT_DEFS) {
     rectSliders[d.key].disabled = !locked;
+    rectVals[d.key].disabled = !locked;
     rectVals[d.key].classList.toggle('locked', !locked);
   }
 }
@@ -742,10 +799,20 @@ updateRectLockUi();
 syncRectFromCorners();
 
 tiltSlider.addEventListener('input', () => {
-  tiltVal.textContent = Number(tiltSlider.value).toFixed(1);
+  tiltVal.value = Number(tiltSlider.value).toFixed(1);
   if (daLock.checked) applyLockConstraints();
   syncRectFromCorners();
   void writeDisplayArea();
+});
+
+tiltVal.addEventListener('input', () => {
+  const v = Number(tiltVal.value);
+  if (Number.isFinite(v)) {
+    tiltSlider.value = String(v);
+    if (daLock.checked) applyLockConstraints();
+    syncRectFromCorners();
+    void writeDisplayArea();
+  }
 });
 
 daLock.addEventListener('change', () => {
@@ -2236,3 +2303,220 @@ if (typeof navigator !== 'undefined' && 'usb' in navigator) {
 }
 
 void tryAutoConnect();
+
+// ── Calibration workbench ───────────────────────────────────────────
+
+let activeBundle: wb.CalBundle | null = null;
+
+function readScreenRect(): wb.CalBundle['screen_rect'] {
+  const num = (el: HTMLInputElement) => Number(el.value);
+  return {
+    w_mm: num(rectSliders.width),
+    h_mm: num(rectSliders.height),
+    cx_mm: num(rectSliders.cx),
+    cy_mm: num(rectSliders.cy),
+    cz_mm: num(rectSliders.cz),
+    tilt_mm: Number(tiltSlider.value),
+  };
+}
+
+function formatResultsSummary(b: wb.CalBundle): string {
+  const fmtPct = (v: number) => (v * 100).toFixed(2) + '%';
+  const pre = b.pre_fit;
+  const post = b.post_fit;
+  const lines = [
+    `Bundle: ${b.id}`,
+    `DA: w=${b.screen_rect.w_mm.toFixed(1)} h=${b.screen_rect.h_mm.toFixed(1)} cy=${b.screen_rect.cy_mm.toFixed(1)} (mm)`,
+    `Test: ${pre.n} pts · fit=${b.fit_kind}`,
+    `Pre  : mean ${fmtPct(pre.mean_norm)} · p95 ${fmtPct(pre.p95_norm)} · max ${fmtPct(pre.max_norm)}`,
+  ];
+  if (post) lines.push(`Post : mean ${fmtPct(post.mean_norm)} · p95 ${fmtPct(post.p95_norm)} · max ${fmtPct(post.max_norm)}`);
+  return lines.join('\n');
+}
+
+function renderBundleResults(b: wb.CalBundle) {
+  wbResults.textContent = '';
+  const pre = document.createElement('pre');
+  pre.style.cssText = 'margin:0 0 6px 0;color:#d8d8e0;font:inherit;font-size:10px;white-space:pre-wrap;line-height:1.45;';
+  pre.textContent = formatResultsSummary(b);
+  wbResults.appendChild(pre);
+
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;';
+
+  const preCol = document.createElement('div');
+  const preLbl = document.createElement('div');
+  preLbl.style.cssText = 'color:#8888a0;font-size:10px;margin-bottom:2px;';
+  preLbl.textContent = 'Pre-fit';
+  preCol.appendChild(preLbl);
+  preCol.appendChild(wb.renderResidualSvg(b.test_points, null, 150, 150));
+  row.appendChild(preCol);
+
+  if (b.fit_model) {
+    const postCol = document.createElement('div');
+    const postLbl = document.createElement('div');
+    postLbl.style.cssText = 'color:#8888a0;font-size:10px;margin-bottom:2px;';
+    postLbl.textContent = `Post-fit (${b.fit_kind})`;
+    postCol.appendChild(postLbl);
+    const predict = (m: wb.V2) => wb.predictWithModel(b.fit_model!, m);
+    postCol.appendChild(wb.renderResidualSvg(b.test_points, predict, 150, 150));
+    row.appendChild(postCol);
+  }
+  wbResults.appendChild(row);
+}
+
+function refreshBundlesDropdown() {
+  const all = wb.listBundles();
+  wbBundles.innerHTML = '';
+  if (all.length === 0) {
+    const opt = document.createElement('option');
+    opt.value = ''; opt.textContent = '(no saved bundles)';
+    wbBundles.appendChild(opt);
+    wbBundles.disabled = true;
+    return;
+  }
+  wbBundles.disabled = false;
+  for (const b of all) {
+    const opt = document.createElement('option');
+    opt.value = b.id;
+    const pre_mm = (b.pre_fit.mean_norm * b.screen_rect.w_mm).toFixed(1);
+    const post_mm = b.post_fit ? (b.post_fit.mean_norm * b.screen_rect.w_mm).toFixed(1) : '—';
+    opt.textContent = `${b.id} · ${b.fit_kind} · pre ${pre_mm}→post ${post_mm} mm`;
+    wbBundles.appendChild(opt);
+  }
+}
+
+async function runWorkbenchTest() {
+  if (!tracker || calRunning) return;
+  const layout = Number(wbLayout.value) as wb.Layout;
+  const fitKind = wbFit.value as 'none' | 'affine' | 'poly2' | 'poly3';
+  const degree: 1 | 2 | 3 | null = fitKind === 'affine' ? 1 : fitKind === 'poly2' ? 2 : fitKind === 'poly3' ? 3 : null;
+  if (degree !== null && layout < wb.minPointsFor(degree)) {
+    wbResults.textContent = `Need ≥${wb.minPointsFor(degree)} points for ${fitKind}. Pick a larger layout.`;
+    return;
+  }
+
+  calRunning = true;
+  wbRun.disabled = true;
+  daCal.disabled = true;
+  daOnboardCal.disabled = true;
+
+  try {
+    if (!document.fullscreenElement) {
+      try { await document.documentElement.requestFullscreen(); } catch (e) {
+        wbResults.textContent = `Fullscreen failed: ${e instanceof Error ? e.message : String(e)}`;
+        return;
+      }
+    }
+    calOverlay.classList.add('active');
+    calOverlay.style.cursor = 'crosshair';
+    calTarget.style.display = 'none';
+    collectTarget.style.display = 'none';
+
+    const points = wb.makeTestGrid(layout);
+    const testResults = await wb.runValidationTest({
+      tracker,
+      points,
+      overlay: calOverlay,
+      dot: onboardCalDot,
+      status: calStatus,
+      viewportW: window.innerWidth,
+      viewportH: window.innerHeight,
+    });
+
+    if (testResults.length < points.length) {
+      wbResults.textContent = `Test cancelled (${testResults.length}/${points.length} collected)`;
+      return;
+    }
+
+    const preStats = wb.computeStats(testResults);
+    const currentArea = readForm();
+    const fitModel = degree !== null ? wb.fitGazeModel(testResults, degree, currentArea) : null;
+    const postStats = fitModel ? wb.computeStats(testResults, m => wb.predictWithModel(fitModel, m)) : null;
+
+    const calBlobB64 = localStorage.getItem('tobii_onboard_cal');
+    const bundle: wb.CalBundle = {
+      id: wb.newBundleId(),
+      timestamp: Date.now(),
+      label: `${layout}pt · ${fitKind}`,
+      display_area: currentArea,
+      screen_rect: readScreenRect(),
+      viewport_px: { w: window.innerWidth, h: window.innerHeight },
+      cal_blob_b64: calBlobB64,
+      test_points: testResults,
+      fit_model: fitModel,
+      fit_kind: fitKind,
+      pre_fit: preStats,
+      post_fit: postStats,
+    };
+    wb.saveBundle(bundle);
+    activeBundle = bundle;
+    if (fitModel && wbApply.checked) gazeModel = fitModel as GazeModel;
+    refreshBundlesDropdown();
+    wbBundles.value = bundle.id;
+    renderBundleResults(bundle);
+  } catch (e) {
+    wbResults.textContent = `Test error: ${e instanceof Error ? e.message : String(e)}`;
+  } finally {
+    calOverlay.classList.remove('active');
+    calOverlay.style.cursor = '';
+    onboardCalDot.style.display = 'none';
+    onboardCalDot.classList.remove('collecting');
+    if (document.fullscreenElement) { try { await document.exitFullscreen(); } catch { } }
+    calRunning = false;
+    wbRun.disabled = false;
+    daCal.disabled = false;
+    daOnboardCal.disabled = false;
+  }
+}
+
+wbRun.addEventListener('click', () => { void runWorkbenchTest(); });
+
+wbLoad.addEventListener('click', async () => {
+  const id = wbBundles.value;
+  if (!id) return;
+  const b = wb.loadBundle(id);
+  if (!b) return;
+  activeBundle = b;
+  try {
+    if (tracker && b.cal_blob_b64) {
+      const bin = atob(b.cal_blob_b64);
+      const blob = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) blob[i] = bin.charCodeAt(i);
+      await tracker.calApply(blob);
+    }
+    if (tracker) await tracker.setDisplayAreaCorners(b.display_area);
+    setFormValues(b.display_area);
+    if (b.fit_model && wbApply.checked) gazeModel = b.fit_model as GazeModel;
+    else if (!wbApply.checked) gazeModel = null;
+    renderBundleResults(b);
+  } catch (e) {
+    wbResults.textContent = `Load error: ${e instanceof Error ? e.message : String(e)}`;
+  }
+});
+
+wbExport.addEventListener('click', () => {
+  const id = wbBundles.value;
+  const b = id ? wb.loadBundle(id) : activeBundle;
+  if (!b) return;
+  wb.exportBundleToFile(b);
+});
+
+wbDelete.addEventListener('click', () => {
+  const id = wbBundles.value;
+  if (!id) return;
+  if (!window.confirm(`Delete bundle ${id}?`)) return;
+  wb.deleteBundle(id);
+  if (activeBundle?.id === id) activeBundle = null;
+  refreshBundlesDropdown();
+});
+
+wbApply.addEventListener('change', () => {
+  if (wbApply.checked && activeBundle?.fit_model) {
+    gazeModel = activeBundle.fit_model as GazeModel;
+  } else if (!wbApply.checked) {
+    gazeModel = null;
+  }
+});
+
+refreshBundlesDropdown();

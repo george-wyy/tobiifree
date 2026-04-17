@@ -55,12 +55,20 @@
         display: none; }
       #da h2 { margin: 0 0 8px 0; font-size: 11px; font-weight: 600;
         color: #b0b0c0; letter-spacing: 0.04em; text-transform: uppercase; }
-      #da .grid { display: grid; grid-template-columns: 28px 1fr 56px;
+      #da .grid { display: grid; grid-template-columns: 28px 1fr 64px;
         gap: 4px 8px; align-items: center; }
       #da label { color: #8888a0; font-size: 11px; }
       #da input[type=range] { width: 100%; accent-color: #2a6df4; }
       #da .val { color: #d8d8e0; font-size: 11px; text-align: right;
         font-variant-numeric: tabular-nums; }
+      #da input.val { width: 100%; box-sizing: border-box; padding: 2px 4px;
+        background: #1a1a24; border: 1px solid #2a2a36; border-radius: 3px;
+        font-family: inherit; -moz-appearance: textfield; }
+      #da input.val::-webkit-outer-spin-button,
+      #da input.val::-webkit-inner-spin-button {
+        -webkit-appearance: none; margin: 0; }
+      #da input.val:focus { outline: none; border-color: #2a6df4; }
+      #da input.val:disabled { opacity: 0.45; cursor: not-allowed; }
       #da .group { color: #5a5a70; font-size: 10px; text-transform: uppercase;
         letter-spacing: 0.05em; margin: 6px 0 2px 0; }
       #da .btns { display: flex; gap: 6px; margin-top: 8px; }
@@ -183,12 +191,12 @@
         <div class="grid" id="tilt-row" style="margin-top:6px">
           <label for="da-tilt" style="grid-column:1 / 2">tilt</label>
           <input type="range" id="da-tilt" min="-200" max="200" step="0.5" value="0" style="grid-column:2 / 3" />
-          <div class="val" id="da-tilt-val" style="grid-column:3 / 4">0.0</div>
+          <input type="number" class="val" id="da-tilt-val" min="-200" max="200" step="0.5" value="0" style="grid-column:3 / 4" />
         </div>
         <div class="grid" id="da-grid" style="margin-top:6px"></div>
         <div class="btns">
           <button id="da-reload" class="secondary" type="button">Reload from device</button>
-          <button id="da-reset" class="secondary" type="button">Reset 400×300</button>
+          <button id="da-reset" class="secondary" type="button">Reset 595×335</button>
         </div>
         <div class="btns">
           <button id="da-winperm" class="secondary" type="button">Grant window mgmt</button>
@@ -210,6 +218,30 @@
           <button id="da-big-plane" class="secondary" type="button">Big plane</button>
         </div>
         <pre id="diag-out" style="margin:8px 0 0 0; color:#b0b0c0; font-size:10px; white-space:pre-wrap; line-height:1.4;"></pre>
+
+        <div class="group" style="margin-top:12px">CALIBRATION WORKBENCH</div>
+        <div class="btns">
+          <select id="wb-layout" style="background:#2a2a36;color:#d8d8e0;border:1px solid #3a3a48;border-radius:4px;padding:4px 6px;font:inherit;font-size:11px">
+            <option value="5" selected>5 pt test</option>
+            <option value="9">9 pt test</option>
+            <option value="13">13 pt test</option>
+          </select>
+          <select id="wb-fit" style="background:#2a2a36;color:#d8d8e0;border:1px solid #3a3a48;border-radius:4px;padding:4px 6px;font:inherit;font-size:11px">
+            <option value="none">No fit</option>
+            <option value="affine" selected>Affine</option>
+            <option value="poly2">Poly-2</option>
+            <option value="poly3">Poly-3</option>
+          </select>
+          <button id="wb-run" type="button">Run test</button>
+        </div>
+        <div class="btns">
+          <select id="wb-bundles" style="background:#2a2a36;color:#d8d8e0;border:1px solid #3a3a48;border-radius:4px;padding:4px 6px;font:inherit;font-size:11px;flex:1;min-width:0"></select>
+          <button id="wb-load" class="secondary" type="button">Load</button>
+          <button id="wb-export" class="secondary" type="button">Export</button>
+          <button id="wb-delete" class="secondary" type="button">Delete</button>
+        </div>
+        <label class="lock" style="margin:6px 0 0"><input type="checkbox" id="wb-apply" checked /> Apply fit correction</label>
+        <div id="wb-results" style="margin-top:8px; color:#b0b0c0; font-size:10px; line-height:1.45;"></div>
       </div>
     </div>
     <div id="cal-overlay">
