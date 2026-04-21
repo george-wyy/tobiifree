@@ -344,7 +344,10 @@ async function connect() {
       await connectWithWs(wsUrlInput.value.trim() || 'ws://localhost:7081');
     } else {
       const device = await navigator.usb.requestDevice({
-        filters: [{ vendorId: 0x2104, productId: 0x0313 }],
+        filters: [
+          { vendorId: 0x2104, productId: 0x0313 }, // ET5
+          { vendorId: 0x2104, productId: 0x0127 }, // 4c (spike)
+        ],
       });
       await connectWithDevice(device);
     }
@@ -2277,7 +2280,7 @@ async function tryAutoConnect() {
   if (typeof navigator === 'undefined' || !('usb' in navigator)) return;
   try {
     const devices = await navigator.usb.getDevices();
-    const dev = devices.find(d => d.vendorId === 0x2104 && d.productId === 0x0313);
+    const dev = devices.find(d => d.vendorId === 0x2104 && (d.productId === 0x0313 || d.productId === 0x0127));
     if (dev) await connectWithDevice(dev);
   } catch (e) {
     console.warn('auto-connect failed', e);
@@ -2289,14 +2292,14 @@ if (typeof navigator !== 'undefined' && 'usb' in navigator) {
   navigator.usb.addEventListener('connect', (e) => {
     const dev = (e as USBConnectionEvent).device;
     if (tracker || transportSel.value !== 'usb') return;
-    if (dev.vendorId === 0x2104 && dev.productId === 0x0313) {
+    if (dev.vendorId === 0x2104 && (dev.productId === 0x0313 || dev.productId === 0x0127)) {
       void connectWithDevice(dev);
     }
   });
   navigator.usb.addEventListener('disconnect', (e) => {
     const dev = (e as USBConnectionEvent).device;
     if (!tracker) return;
-    if (dev.vendorId === 0x2104 && dev.productId === 0x0313) {
+    if (dev.vendorId === 0x2104 && (dev.productId === 0x0313 || dev.productId === 0x0127)) {
       void disconnect();
     }
   });
