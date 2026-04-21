@@ -66,6 +66,27 @@ nix build .#tobiifree-demo     # static SPA (deployable to any web server)
 |--------|---------|--------|
 | Tobii Eye Tracker 5 (runtime) | `2104:0313` | Working — gaze, calibration, display area |
 | Tobii Eye Tracker 5 (bootloader) | `2104:0102` | DFU flash only |
+| Tobii 4c (runtime) | `2104:0127` | **Fork** — WebUSB path only; 90 Hz verified on macOS |
+
+## Fork notes — Tobii 4c support
+
+This fork adds Tobii 4c (`2104:0127`) on the `feat/tobii-4c-support` branch.
+USB descriptors are structurally identical to ET5 (same product string
+`EyeChip`, same 3-interface composite layout, same endpoint counts), so the
+TTP/TLV protocol is reused as-is.
+
+**Scope**: WebUSB path only (`sdk/src/webusb.ts` + `applications/tobiifree-demo`).
+The native Zig path (`driver/src/libusb_transport.zig`, used by `tobiifreed`)
+has not been updated.
+
+**Tested on**: macOS 26 / Chrome WebUSB, 90 Hz gaze stream, 5-pt affine
+calibration pipeline working end-to-end.
+
+**Known differences from ET5**:
+- `validity_L/R` mask bits show 0/0 (field position/semantics likely differ);
+  gaze and pupil values are still correct
+- Extra column IDs `0x25` / `0x27` carry additional direction data; handled
+  by the generic TLV fallback in `tobiifree_decode.zig`
 
 ## License
 
