@@ -68,12 +68,16 @@ nix build .#tobiifree-demo     # static SPA (deployable to any web server)
 | Tobii Eye Tracker 5 (bootloader) | `2104:0102` | DFU flash only |
 | Tobii 4c (runtime) | `2104:0127` | **Fork** — WebUSB path only; 90 Hz verified on macOS |
 
-## Fork notes — Tobii 4c support
+## Fork additions
 
-This fork adds Tobii 4c (`2104:0127`) on the `feat/tobii-4c-support` branch.
-USB descriptors are structurally identical to ET5 (same product string
-`EyeChip`, same 3-interface composite layout, same endpoint counts), so the
-TTP/TLV protocol is reused as-is.
+This fork adds two features on top of upstream `aetherall/tobiifree`.
+
+### 1. Tobii 4c support — `feat/tobii-4c-support` branch
+
+Adds Tobii 4c (`2104:0127`) to the WebUSB path. USB descriptors are
+structurally identical to ET5 (same product string `EyeChip`, same 3-interface
+composite layout, same endpoint counts), so the TTP/TLV protocol is reused
+as-is.
 
 **Scope**: WebUSB path only (`sdk/src/webusb.ts` + `applications/tobiifree-demo`).
 The native Zig path (`driver/src/libusb_transport.zig`, used by `tobiifreed`)
@@ -87,6 +91,26 @@ calibration pipeline working end-to-end.
   gaze and pupil values are still correct
 - Extra column IDs `0x25` / `0x27` carry additional direction data; handled
   by the generic TLV fallback in `tobiifree_decode.zig`
+
+### 2. Calibration workbench — on `main`
+
+Post-calibration validation + client-side polynomial correction fit, layered
+on top of the tracker's onboard calibration. Code in
+`applications/tobiifree-demo/src/cal-workbench.ts` (~413 LOC), integrated into
+`main.ts`.
+
+**Features**:
+- **Validation grids**: 5 / 9 / 13 test points (configurable margin)
+- **Client-side fit models**: `affine` / `poly2` / `poly3` (polynomial degree
+  1-3) applied to gaze after onboard calibration
+- **Persistent bundles**: browser `localStorage` under key
+  `tobii_cal_bundles_v1` — stores display area, screen rect, viewport, onboard
+  cal blob, test points, fit model, pre/post residual stats. Loadable /
+  exportable / deletable from the UI.
+- **Residual statistics**: mean / p95 / max error norms, per-point errors,
+  computed before and after the client-side fit
+- **Apply fit correction** toggle: enable/disable the client-side fit at
+  runtime (compare with/without)
 
 ## License
 
