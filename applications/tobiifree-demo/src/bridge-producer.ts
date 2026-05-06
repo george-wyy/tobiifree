@@ -74,7 +74,22 @@ export function maybeStartBridgeProducer(
     const pr = s.pupil_diameter_R_mm;
     const pupils = [pl, pr].filter((v): v is number => typeof v === 'number' && v > 0);
     const pupil = pupils.length ? pupils.reduce((a, b) => a + b, 0) / pupils.length : null;
-    ws.send(JSON.stringify({ x: pt.x, y: pt.y, pupil, t: Date.now(), corrected }));
+    // 透传双眼独立信号，供下游做眨眼检测：
+    //  - validity_L/R: 0 = 可见, 4 = 未检测到（部分 firmware 不可靠，但保留）
+    //  - pupil_L/R:  -1 或缺失 = 该眼当前不可见（更可靠的"闭眼"信号）
+    ws.send(
+      JSON.stringify({
+        x: pt.x,
+        y: pt.y,
+        pupil,
+        t: Date.now(),
+        corrected,
+        pl: typeof pl === 'number' ? pl : null,
+        pr: typeof pr === 'number' ? pr : null,
+        vl: typeof s.validity_L === 'number' ? s.validity_L : null,
+        vr: typeof s.validity_R === 'number' ? s.validity_R : null,
+      }),
+    );
   });
 
   return () => {
