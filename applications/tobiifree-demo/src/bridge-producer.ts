@@ -1,7 +1,7 @@
 // Optional bridge producer: pushes each gaze sample to a local WebSocket relay.
 //
 // Off by default. Enable with one of:
-//   ?bridge=1                       (uses ws://localhost:7081/gaze)
+//   ?bridge=1                       (uses ws://localhost:9081/gaze)
 //   ?bridge=ws://host:port/path     (custom URL)
 //
 // Consumer: voice-gaze-ui (or any client) receives { x, y, pupil, t } in the
@@ -10,7 +10,7 @@
 
 import type { GazeSample, Source } from 'tobiifree-sdk-ts';
 
-const DEFAULT_URL = 'ws://localhost:7081/gaze';
+const DEFAULT_URL = 'ws://localhost:9081/gaze';
 
 function resolveBridgeUrl(): string | null {
   const p = new URLSearchParams(location.search).get('bridge');
